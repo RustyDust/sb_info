@@ -2,7 +2,7 @@
 Utility to read the information from a SonnenBatterie via the provided APIs.
 
 ## Usage
-Download the version for your operating system from the [Releases]() page,
+Download the version for your operating system from the [Releases](https://github.com/RustyDust/sb_info/releases) page,
 unpack and then in a terminal run:
 
 ### Mac / Linux
