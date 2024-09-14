@@ -6,14 +6,11 @@ import (
 	"sb_info/sb"
 )
 
-//TIP To run your code, right-click the code and select <b>Run</b>. Alternatively, click
-// the <icon src="AllIcons.Actions.Execute"/> icon in the gutter and select the <b>Run</b> menu item from here.
-
 func main() {
 	// parse the command line
-	u := flag.String("u", "user", "username, one of `Vendor`, `Installer`, `Service`, `User`, `Oem`")
-	p := flag.String("p", "user", "password")
-	h := flag.String("h", "127.0.0.1", "host")
+	u := flag.String("u", "", "username, one of `Vendor`, `Installer`, `Service`, `User`, `Oem`")
+	p := flag.String("p", "", "password")
+	h := flag.String("h", "", "host")
 	flag.Parse()
 	flag.Args()
 
@@ -63,6 +60,3 @@ func main() {
 	fmt.Printf("Battery:\n%s\n\n", res)
 
 }
-
-//TIP See GoLand help at <a href="https://www.jetbrains.com/help/go/">jetbrains.com/help/go/</a>.
-// Also, you can try interactive lessons for GoLand by selecting 'Help | Learn IDE Features' from the main menu.
