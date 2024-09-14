@@ -22,16 +22,6 @@ macarm: GOOS=darwin
 macarm: EXT=
 macarm: build pack
 
-lintel: GOARCH=amd64
-lintel: GOOS=linux
-lintel: EXT=
-lintel: build pack
-
-linarm: GOARCH=arm64
-linarm: GOOS=linux
-linarm: EXT=
-linarm: build pack
-
 wintel: GOARCH=amd64
 wintel: GOOS=windows
 wintel: EXT=.exe
