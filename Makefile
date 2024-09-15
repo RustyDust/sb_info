@@ -32,7 +32,7 @@ winarm: GOOS=windows
 winarm: EXT=.exe
 winarm: build pack
 
-all: RUNS=amd64 arm64 mactel macarm wintel winarm lintel linarm
+all: RUNS=amd64 arm64 mactel macarm wintel winarm
 all:
 	@for RUN in $(RUNS); do make $$RUN; done
 
