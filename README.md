@@ -12,19 +12,20 @@ unpack and then in a terminal run:
 
 ### Windows
 ``` powershell
-./sb_info.exe -u <user type> -p <password> -h <ip/host>
+./sb_info.exe -u <user type> -p <password> -h <ip/host> [-2]
 ```
 
 #### Parameters
 - `<user type>` := String, one of `Vendor`, `Installer`, `Service`, `User`, `Oem`
 - `<password` := String, your password either as set by you or provided by Sonnen
 - `<isp/host>` := String, IP address or host name of the SonnenBatterie
+- `-2` := if present, use v2 API
 
 #### Examples
 
 ``` bash
-### Mac/Linux using the `User` user type
-./sb_info -u User -p SecretPassword -h 192.168.0.22
+### Mac/Linux using the `User` user type, checking API v2
+./sb_info -u User -p SecretPassword -h 192.168.0.22 -2
 
 ### Windows using the `Vendor` user type
 .\sb_info.exe -u Vendor -p VendorSecret -h 172.16.17.18    

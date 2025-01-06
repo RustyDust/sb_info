@@ -19,15 +19,18 @@ type SonnenBatterie struct {
 	Password string
 	Host     string
 	BaseUrl  string
+	BaseApi2 string
 	Token    string
 }
 
 func SunBatInit(username, password string, host string) *SonnenBatterie {
+	//goland:noinspection HttpUrlsUsage
 	return &SonnenBatterie{
 		Username: username,
 		Password: password,
 		Host:     host,
 		BaseUrl:  "http://" + host + "/api/",
+		BaseApi2: "http://" + host + "/api/v2/",
 	}
 }
 
@@ -83,6 +86,38 @@ func (sb *SonnenBatterie) Login() {
 
 func (sb *SonnenBatterie) Get(what string) (string, bool) {
 	req, err := http.NewRequest("GET", sb.BaseUrl+what, nil)
+	if err != nil {
+		return "", false
+	}
+	req.Header.Set("Auth-Token", sb.Token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", false
+	}
+	contents, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", false
+	}
+	// fmt.Printf("contents:\n%v\n", string(contents))
+
+	// map JSON
+	var result map[string]interface{}
+	err = json.Unmarshal(contents, &result)
+	if err != nil {
+		return "", false
+	}
+
+	out, err := json.MarshalIndent(result, "", "  ")
+	if err != nil {
+		return "", false
+	}
+
+	// fmt.Println(string(out))
+	return string(out), true
+}
+
+func (sb *SonnenBatterie) GetApi2(what string) (string, bool) {
+	req, err := http.NewRequest("GET", sb.BaseApi2+what, nil)
 	if err != nil {
 		return "", false
 	}

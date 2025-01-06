@@ -40,12 +40,12 @@ build:
 	@rm -rf bin/$(GOOS)/$(GOARCH)
 	@mkdir -p bin/$(GOOS)/$(GOARCH)
 	@echo -n Building sb_test in './bin/$(GOOS)/$(GOARCH)'. Please wait ...
-	@GOOS=$(GOOS) GOARCH=$(GOARCH) go build -trimpath -a -o bin/$(GOOS)/$(GOARCH)/sb_test$(EXT)
+	@GOOS=$(GOOS) GOARCH=$(GOARCH) go build -trimpath -a -o bin/$(GOOS)/$(GOARCH)/sb_info$(EXT)
 	@echo " done"
 
 pack:
 	@echo Version $(VERSION) $(GOOS) $(GOARCH)
 	@rm -f bin/sb_info-*-$(GOOS)-$(GOARCH).tar.gz
-	@gtar czf bin/sb_info-$(VERSION)-$(GOOS)-$(GOARCH).tar.gz bin/$(GOOS)/$(GOARCH)/sb_test$(EXT)
+	@gtar czf bin/sb_info-$(VERSION)-$(GOOS)-$(GOARCH).tar.gz bin/$(GOOS)/$(GOARCH)/sb_info$(EXT)
 
 .PHONY: build
