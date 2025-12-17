@@ -1,9 +1,6 @@
 name: Build Release Binaries
 
 on:
-  push:
-    tags:
-      - 'v*'
   release:
     types: [created]
 
@@ -54,7 +51,7 @@ jobs:
               
               # Create zip file with the exe
               cd bin/windows/$arch
-              zip -j "../../../${filename}.zip" sb_info.exe
+              zip -j "../../${filename}.zip" sb_info.exe
               cd ../../..
               
               # Remove the Windows tar.gz files
