@@ -1,6 +1,7 @@
 .DEFAULT_GOAL := mactel
 
 VERSION := $(shell git tag | tail -1)
+TAR := $(shell command -v gtar 2>/dev/null || command -v tar 2>/dev/null)
 
 amd64: GOARCH=amd64
 amd64: GOOS=linux
@@ -46,6 +47,6 @@ build:
 pack:
 	@echo Version $(VERSION) $(GOOS) $(GOARCH)
 	@rm -f bin/sb_info-*-$(GOOS)-$(GOARCH).tar.gz
-	@gtar czf bin/sb_info-$(VERSION)-$(GOOS)-$(GOARCH).tar.gz bin/$(GOOS)/$(GOARCH)/sb_info$(EXT)
+	@$(TAR) czf bin/sb_info-$(VERSION)-$(GOOS)-$(GOARCH).tar.gz bin/$(GOOS)/$(GOARCH)/sb_info$(EXT)
 
 .PHONY: build
