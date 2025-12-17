@@ -38,20 +38,24 @@ jobs:
         run: |
           for tarfile in bin/sb_info-*-windows-*.tar.gz; do
             if [ -f "$tarfile" ]; then
+              # Get the basename without .tar.gz and extract architecture
+              basename="${tarfile%.tar.gz}"
+              filename="${basename##*/}"
+              
               # Extract the tar.gz
               tar -xzf "$tarfile"
               
-              # Get the basename without .tar.gz
-              basename="${tarfile%.tar.gz}"
+              # Determine architecture from filename
+              if [[ "$filename" == *"amd64"* ]]; then
+                arch="amd64"
+              elif [[ "$filename" == *"arm64"* ]]; then
+                arch="arm64"
+              fi
               
               # Create zip file with the exe
-              cd bin/windows
-              for arch in amd64 arm64; do
-                if [ -d "$arch" ]; then
-                  zip -r "../../${basename##*/}-${arch}.zip" "$arch/sb_info.exe"
-                fi
-              done
-              cd ../..
+              cd bin/windows/$arch
+              zip -j "../../../${filename}.zip" sb_info.exe
+              cd ../../..
               
               # Remove the Windows tar.gz files
               rm "$tarfile"
