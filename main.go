@@ -3,8 +3,12 @@ package main
 import (
 	"flag"
 	"fmt"
+	"os"
 	"sb_info/sb"
 )
+
+// Version is set during build via ldflags
+var Version = "dev"
 
 func main() {
 	// parse the command line
@@ -12,8 +16,14 @@ func main() {
 	p := flag.String("p", "", "password")
 	h := flag.String("h", "", "host")
 	t := flag.Bool("2", false, "Use only Api v2")
+	version := flag.Bool("version", false, "Show version information")
 	flag.Parse()
 	flag.Args()
+
+	if *version {
+		fmt.Printf("sb_info version %s\n", Version)
+		os.Exit(0)
+	}
 
 	fmt.Println("SonnenBatterie Check")
 	fmt.Println("====================")
@@ -64,37 +74,37 @@ func main() {
 	} else {
 		res, ok := sunBat.Get("battery_system")
 		if !ok {
-			fmt.Println("!!! - unable to get SonnenBatterie system information\n")
+			fmt.Println("!!! - unable to get SonnenBatterie system information")
 		}
 		fmt.Printf("System:\n%s\n\n", res)
 
 		res, ok = sunBat.Get("powermeter")
 		if !ok {
-			fmt.Println("!!! - unable to get SonnenBatterie power meter information\n")
+			fmt.Println("!!! - unable to get SonnenBatterie power meter information")
 		}
 		fmt.Printf("Power meter:\n%s\n\n", res)
 
 		res, ok = sunBat.Get("inverter")
 		if !ok {
-			fmt.Println("!!! - unable to get SonnenBatterie inverter information\n")
+			fmt.Println("!!! - unable to get SonnenBatterie inverter information")
 		}
 		fmt.Printf("Inverter:\n%s\n\n", res)
 
 		res, ok = sunBat.Get("system_data")
 		if !ok {
-			fmt.Println("!!! - unable to get SonnenBatterie system data information\n")
+			fmt.Println("!!! - unable to get SonnenBatterie system data information")
 		}
 		fmt.Printf("System data:\n%s\n\n", res)
 
 		res, ok = sunBat.Get("v1/status")
 		if !ok {
-			fmt.Println("!!! - unable to get SonnenBatterie status information\n")
+			fmt.Println("!!! - unable to get SonnenBatterie status information")
 		}
 		fmt.Printf("Status:\n%s\n\n", res)
 
 		res, ok = sunBat.Get("battery")
 		if !ok {
-			fmt.Println("!!! - unable to get SonnenBatterie battery information\n")
+			fmt.Println("!!! - unable to get SonnenBatterie battery information")
 		}
 		fmt.Printf("Battery:\n%s\n\n", res)
 	}

@@ -39,8 +39,8 @@ all:
 build:
 	@rm -rf bin/$(GOOS)/$(GOARCH)
 	@mkdir -p bin/$(GOOS)/$(GOARCH)
-	@echo -n Building sb_test in './bin/$(GOOS)/$(GOARCH)'. Please wait ...
-	@GOOS=$(GOOS) GOARCH=$(GOARCH) go build -trimpath -a -o bin/$(GOOS)/$(GOARCH)/sb_info$(EXT)
+	@echo -n Building sb_info in './bin/$(GOOS)/$(GOARCH)'. Please wait ...
+	@GOOS=$(GOOS) GOARCH=$(GOARCH) go build -trimpath -a -ldflags="-X 'main.Version=$(VERSION)'" -o bin/$(GOOS)/$(GOARCH)/sb_info$(EXT)
 	@echo " done"
 
 pack:

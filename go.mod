@@ -1,5 +1,5 @@
 module sb_info
 
-go 1.23.0
+go 1.25.5
 
-require golang.org/x/crypto v0.31.0
+require golang.org/x/crypto v0.46.0

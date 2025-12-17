@@ -30,3 +30,49 @@ unpack and then in a terminal run:
 ### Windows using the `Vendor` user type
 .\sb_info.exe -u Vendor -p VendorSecret -h 172.16.17.18    
 ```
+## Building from Source
+
+### Prerequisites
+- Go 1.23.0 or later
+- GNU tar (`gtar` on macOS, available via Homebrew: `brew install gnu-tar`)
+
+### Build for Your Platform
+```bash
+# macOS Intel (default)
+make mactel
+
+# macOS Apple Silicon
+make macarm
+
+# Linux AMD64
+make amd64
+
+# Linux ARM64
+make arm64
+
+# Windows Intel
+make wintel
+
+# Windows ARM
+make winarm
+```
+
+### Build All Platforms
+```bash
+make all
+```
+
+### Build Output
+Binaries are created in `bin/<os>/<arch>/sb_info[.exe]` and automatically packaged as versioned tarballs:
+- `sb_info-<VERSION>-<os>-<arch>.tar.gz`
+
+Version is extracted from the latest git tag.
+
+### Development
+```bash
+# Run without building
+go run main.go -u User -p password -h 192.168.1.100
+
+# Run with API v2
+go run main.go -u User -p password -h 192.168.1.100 -2
+```
