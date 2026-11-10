@@ -1,112 +1,275 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
+	"math"
 	"os"
+	"strconv"
+	"strings"
+	"time"
+
 	"sb_info/sb"
 )
 
 // Version is set during build via ldflags
 var Version = "dev"
 
+// Endpoints read by the tool, paths relative to /api/. GET only: nothing is
+// ever written to the battery.
+var v1Endpoints = []string{
+	"battery_system",
+	"system_data",
+	"v1/status",
+	"battery",
+	"inverter",
+	"powermeter",
+	"json_api/json_api_configuration",
+	"v1/commissioning_assistant/special_function",
+}
+
+var v2Endpoints = []string{
+	"v2/status",
+	"v2/latestdata",
+	"v2/configurations",
+	"v2/battery",
+	"v2/inverter",
+	"v2/powermeter",
+	"v2/io",
+}
+
+// Read-only endpoints the battery's web dashboard uses for cascades (stacks).
+// "protect" answers "not a stack" (HTTP 400) on single batteries;
+// "inverter/stacking/status" needs a role above User (HTTP 401 for User).
+var cascadeEndpoints = []string{
+	"stacking_status",
+	"v1/commissioning_assistant/special_function/stacking/protect",
+	"v1/commissioning_assistant/inverter/stacking/status",
+}
+
+type Tool struct {
+	Name    string `json:"name"`
+	Version string `json:"version"`
+}
+
+type Member struct {
+	Role   string `json:"role"`
+	Serial string `json:"serial,omitempty"`
+}
+
+type Cascade struct {
+	Role           string   `json:"role"`
+	RoleSource     string   `json:"role_source,omitempty"`
+	IsCascade      bool     `json:"is_cascade"`
+	StackCapacityW *float64 `json:"stack_capacity_w,omitempty"`
+	StackModules   *float64 `json:"stack_modules,omitempty"`
+	UnitsByPower   *float64 `json:"units_estimate_by_power,omitempty"`
+	UnitsByModules *float64 `json:"units_estimate_by_modules,omitempty"`
+	Members        []Member `json:"members,omitempty"`
+	MembersSource  string   `json:"members_source,omitempty"`
+}
+
+type Report struct {
+	Tool        Tool                 `json:"tool"`
+	GeneratedAt string               `json:"generated_at"`
+	Host        string               `json:"host"`
+	User        string               `json:"user"`
+	APIs        []string             `json:"apis"`
+	Redacted    []string             `json:"redacted"`
+	Error       string               `json:"error,omitempty"`
+	Cascade     *Cascade             `json:"cascade,omitempty"`
+	Endpoints   map[string]sb.Result `json:"endpoints,omitempty"`
+}
+
 func main() {
-	// parse the command line
-	u := flag.String("u", "", "username, one of `Vendor`, `Installer`, `Service`, `User`, `Oem`")
-	p := flag.String("p", "", "password")
-	h := flag.String("h", "", "host")
-	t := flag.Bool("2", false, "Use only Api v2")
-	version := flag.Bool("version", false, "Show version information")
+	u := flag.String("u", "User", "username, one of `Vendor`, `Installer`, `Service`, `User`, `Oem`")
+	p := flag.String("p", "", "password (or set SB_PASSWORD)")
+	h := flag.String("h", "", "host (IP address or host name of the battery)")
+	onlyV2 := flag.Bool("2", false, "read only API v2 endpoints (plus the cascade check)")
+	noRedact := flag.Bool("no-redact", false, "keep IP and MAC addresses (credentials are always redacted)")
+	version := flag.Bool("version", false, "show version information")
 	flag.Parse()
-	flag.Args()
 
 	if *version {
 		fmt.Printf("sb_info version %s\n", Version)
 		os.Exit(0)
 	}
-
-	fmt.Println("SonnenBatterie Check")
-	fmt.Println("====================")
-
-	fmt.Printf("\nUsing:\nUser: User\nPass: %s\nHost: %s\n\n", *p, *h)
-
-	sunBat := sb.SunBatInit(*u, *p, *h)
-	sunBat.Login()
-
-	// get the Data (Api v1)
-	if *t {
-		res, ok := sunBat.GetApi2("configurations")
-		if !ok {
-			fmt.Println("!!! - unable to get SonnenBatterie configurations (API v2)")
-		}
-		fmt.Printf("SonnenBatterie Configurations:\n%v\n\n", res)
-
-		res, ok = sunBat.GetApi2("battery")
-		if !ok {
-			fmt.Println("!!! - unable to get SonnenBatterie battery module data (API v2)")
-		}
-		fmt.Printf("SonnenBatterie Battery Module Data:\n%v\n\n", res)
-
-		res, ok = sunBat.GetApi2("inverter")
-		if !ok {
-			fmt.Println("!!! - unable to get SonnenBatterie inverter data (API v2)")
-		}
-		fmt.Printf("SonnenBatterie Battery Inverter Data:\n%v\n\n", res)
-
-		res, ok = sunBat.GetApi2("latestdata")
-		if !ok {
-			fmt.Println("!!! - unable to get SonnenBatterie latest data (API v2)")
-		}
-		fmt.Printf("SonnenBatterie Battery Latest Data:\n%v\n\n", res)
-
-		res, ok = sunBat.GetApi2("powermeter")
-		if !ok {
-			fmt.Println("!!! - unable to get SonnenBatterie powermeter measurements (API v2)")
-		}
-		fmt.Printf("SonnenBatterie Powermeter Measurements:\n%v\n\n", res)
-
-		res, ok = sunBat.GetApi2("status")
-		if !ok {
-			fmt.Println("!!! - unable to get SonnenBatterie status (API v2)")
-		}
-		fmt.Printf("SonnenBatterie Status:\n%v\n\n", res)
-
-	} else {
-		res, ok := sunBat.Get("battery_system")
-		if !ok {
-			fmt.Println("!!! - unable to get SonnenBatterie system information")
-		}
-		fmt.Printf("System:\n%s\n\n", res)
-
-		res, ok = sunBat.Get("powermeter")
-		if !ok {
-			fmt.Println("!!! - unable to get SonnenBatterie power meter information")
-		}
-		fmt.Printf("Power meter:\n%s\n\n", res)
-
-		res, ok = sunBat.Get("inverter")
-		if !ok {
-			fmt.Println("!!! - unable to get SonnenBatterie inverter information")
-		}
-		fmt.Printf("Inverter:\n%s\n\n", res)
-
-		res, ok = sunBat.Get("system_data")
-		if !ok {
-			fmt.Println("!!! - unable to get SonnenBatterie system data information")
-		}
-		fmt.Printf("System data:\n%s\n\n", res)
-
-		res, ok = sunBat.Get("v1/status")
-		if !ok {
-			fmt.Println("!!! - unable to get SonnenBatterie status information")
-		}
-		fmt.Printf("Status:\n%s\n\n", res)
-
-		res, ok = sunBat.Get("battery")
-		if !ok {
-			fmt.Println("!!! - unable to get SonnenBatterie battery information")
-		}
-		fmt.Printf("Battery:\n%s\n\n", res)
+	password := *p
+	if password == "" {
+		password = os.Getenv("SB_PASSWORD")
+	}
+	if *h == "" || password == "" {
+		fmt.Fprintln(os.Stderr, "usage: sb_info -h <host> [-u <user>] [-p <password> | SB_PASSWORD=...] [-2] [-no-redact]")
+		os.Exit(2)
 	}
 
+	report := Report{
+		Tool:        Tool{Name: "sb_info", Version: Version},
+		GeneratedAt: time.Now().Format(time.RFC3339),
+		Host:        *h,
+		User:        *u,
+		Redacted:    []string{"credentials"},
+	}
+	if !*noRedact {
+		report.Host = sb.Redacted
+		report.Redacted = append(report.Redacted, "network")
+	}
+
+	// error messages (e.g. connection errors) contain the host
+	scrub := func(msg string) string {
+		if *noRedact {
+			return msg
+		}
+		return strings.ReplaceAll(msg, *h, sb.Redacted)
+	}
+
+	endpoints := append([]string{}, v2Endpoints...)
+	report.APIs = []string{"v2"}
+	if !*onlyV2 {
+		endpoints = append(append([]string{}, v1Endpoints...), endpoints...)
+		report.APIs = []string{"v1", "v2"}
+	}
+	endpoints = append(endpoints, cascadeEndpoints...)
+
+	sunBat := sb.SunBatInit(*u, password, *h)
+	if err := sunBat.Login(); err != nil {
+		report.Error = scrub(err.Error())
+		write(report)
+		os.Exit(1)
+	}
+
+	results := map[string]sb.Result{}
+	for _, path := range endpoints {
+		results[path] = sunBat.Get(path)
+		// the battery's web server handles one request at a time: go easy on it
+		time.Sleep(200 * time.Millisecond)
+	}
+
+	report.Cascade = analyseCascade(results)
+	report.Endpoints = map[string]sb.Result{}
+	for path, r := range results {
+		r.Data = sb.Redact(r.Data, !*noRedact)
+		r.Error = scrub(r.Error)
+		report.Endpoints[path] = r
+	}
+	write(report)
+}
+
+func write(report Report) {
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(report); err != nil {
+		fmt.Fprintln(os.Stderr, "unable to write report:", err)
+		os.Exit(1)
+	}
+}
+
+// analyseCascade summarises what the battery tells about a cascade: its role,
+// the cascade totals of a master (stack_capacity, stack_modules), unit count
+// estimates and, if an endpoint lists them, the members with their serials.
+func analyseCascade(results map[string]sb.Result) *Cascade {
+	c := &Cascade{Role: "unknown"}
+
+	// role: stacking_status (dashboard), else CN_CascadingRole (v1, then v2)
+	for _, src := range []struct{ path, key string }{
+		{"stacking_status", "role"},
+		{"system_data", "CN_CascadingRole"},
+		{"v2/configurations", "CN_CascadingRole"},
+	} {
+		if s, ok := lookup(results[src.path].Data, src.key).(string); ok && s != "" {
+			c.Role, c.RoleSource = s, src.path
+			break
+		}
+	}
+
+	bs := results["battery_system"].Data
+	stackCapacity, okCap := number(lookup(bs, "stack_capacity"))
+	stackModules, okMod := number(lookup(bs, "stack_modules"))
+	inverterCapacity, okInv := number(lookup(bs, "battery_system", "system", "inverter_capacity"))
+	modules, okModules := number(lookup(bs, "modules"))
+	if okCap {
+		c.StackCapacityW = &stackCapacity
+	}
+	if okMod {
+		c.StackModules = &stackModules
+	}
+	if okCap && okInv && stackCapacity > 0 && inverterCapacity > 0 {
+		c.UnitsByPower = ratio(stackCapacity, inverterCapacity)
+	}
+	if okMod && okModules && stackModules > 0 && modules > 0 {
+		c.UnitsByModules = ratio(stackModules, modules)
+	}
+
+	for _, path := range cascadeEndpoints {
+		if members := membersFrom(results[path].Data); len(members) > 0 {
+			c.Members, c.MembersSource = members, path
+			break
+		}
+	}
+
+	c.IsCascade = (c.Role != "none" && c.Role != "unknown") || (okCap && stackCapacity > 0) || len(c.Members) > 1
+	return c
+}
+
+// membersFrom extracts {"master": {...}, "slaves": [{...}, ...]}, the shape
+// the dashboard's cascade endpoints use; data may also be nested in "data".
+func membersFrom(data interface{}) []Member {
+	obj, ok := data.(map[string]interface{})
+	if !ok {
+		return nil
+	}
+	if inner, ok := obj["data"].(map[string]interface{}); ok && obj["master"] == nil {
+		obj = inner
+	}
+	var members []Member
+	if master, ok := obj["master"].(map[string]interface{}); ok {
+		members = append(members, Member{Role: "master", Serial: str(master["serial"])})
+	}
+	if slaves, ok := obj["slaves"].([]interface{}); ok {
+		for _, s := range slaves {
+			if slave, ok := s.(map[string]interface{}); ok {
+				members = append(members, Member{Role: "slave", Serial: str(slave["serial"])})
+			}
+		}
+	}
+	return members
+}
+
+func lookup(data interface{}, keys ...string) interface{} {
+	for _, k := range keys {
+		obj, ok := data.(map[string]interface{})
+		if !ok {
+			return nil
+		}
+		data = obj[k]
+	}
+	return data
+}
+
+func number(v interface{}) (float64, bool) {
+	switch n := v.(type) {
+	case json.Number:
+		f, err := n.Float64()
+		return f, err == nil
+	case string:
+		f, err := strconv.ParseFloat(n, 64)
+		return f, err == nil
+	case float64:
+		return n, true
+	}
+	return 0, false
+}
+
+func ratio(a, b float64) *float64 {
+	r := math.Round(a/b*100) / 100
+	return &r
+}
+
+func str(v interface{}) string {
+	if v == nil {
+		return ""
+	}
+	return fmt.Sprint(v)
 }
