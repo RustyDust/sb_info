@@ -1,3 +1,5 @@
+// Package sb is a minimal client for the local SonnenBatterie API (v1 and v2).
+// It only logs in and reads (GET); it never changes anything on the battery.
 package sb
 
 import (
@@ -11,7 +13,8 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
+	"strings"
+	"time"
 
 	"golang.org/x/crypto/pbkdf2"
 )
@@ -21,8 +24,16 @@ type SonnenBatterie struct {
 	Password string
 	Host     string
 	BaseUrl  string
-	BaseApi2 string
 	Token    string
+	client   *http.Client
+}
+
+// Result of one GET request: the HTTP status and either the decoded JSON
+// body (object, list, ...) or an error message.
+type Result struct {
+	Status int         `json:"status"`
+	Data   interface{} `json:"data,omitempty"`
+	Error  string      `json:"error,omitempty"`
 }
 
 func SunBatInit(username, password string, host string) *SonnenBatterie {
@@ -32,252 +43,170 @@ func SunBatInit(username, password string, host string) *SonnenBatterie {
 		Password: password,
 		Host:     host,
 		BaseUrl:  "http://" + host + "/api/",
-		BaseApi2: "http://" + host + "/api/v2/",
+		client:   &http.Client{Timeout: 15 * time.Second},
 	}
 }
 
-func (sb *SonnenBatterie) Login() {
-	// Check if new login method is supported
-	salt, err := http.Get(sb.BaseUrl + "salt/" + sb.Username)
-	if err == nil && salt.StatusCode == 200 {
-		// Use new login method
-		sb.createSessionTokenNew()
-	} else {
-		// Use old login method
-		pwSha512 := sha512.Sum512([]byte(sb.Password))
-		pwHex512 := hex.EncodeToString(pwSha512[:])
-		// fmt.Printf("pwHex: %s (%d)\n", pwHex512, len(pwHex512))
-
-		req, err := http.Get(sb.BaseUrl + "challenge")
-		if err != nil {
-			panic(err)
-		}
-		challenge, err := io.ReadAll(req.Body)
-		// yikes, the stream also reads the opening and closing quotes
-		challenge = challenge[1 : len(challenge)-1]
-		if err != nil {
-			panic(err)
-		}
-		// fmt.Printf("challenge: %s\n", string(challenge))
-
-		response := hex.EncodeToString(pbkdf2.Key([]byte(pwHex512), challenge, 7500, 64, sha512.New))
-		// fmt.Printf("response: ->%s<- (%d)\n", response, len(response))
-
-		payload := url.Values{}
-		payload.Set("user", sb.Username)
-		payload.Set("challenge", string(challenge))
-		payload.Set("response", response)
-
-		// fmt.Printf("\nPayload: %s\n", payload.Encode())
-
-		req, err = http.Post(sb.BaseUrl+"session", "application/x-www-form-urlencoded", bytes.NewBufferString(payload.Encode()))
-		if err != nil {
-			panic(err)
-		}
-		session, err := io.ReadAll(req.Body)
-		if err != nil {
-			panic(err)
-		}
-
-		var result map[string]interface{}
-		err = json.Unmarshal(session, &result)
-		if err != nil {
-			panic(err)
-		}
-		if result["error"] != nil {
-			fmt.Printf("!!! - login error: %s\n\n", result["error"])
-			os.Exit(1)
-		}
-		// fmt.Printf("r: %s\n", result["authentication_token"])
-
-		sb.Token = result["authentication_token"].(string)
+// Login obtains a session token. Firmware >= 1.18 answers the salt request
+// and uses the salted login; older firmware the plain challenge/response.
+func (sb *SonnenBatterie) Login() error {
+	resp, err := sb.client.Get(sb.BaseUrl + "salt/" + sb.Username)
+	if err != nil {
+		return fmt.Errorf("battery not reachable: %w", err)
 	}
+	resp.Body.Close()
+	if resp.StatusCode == 200 {
+		return sb.createSessionTokenNew()
+	}
+	return sb.createSessionTokenOld()
 }
 
-func (sb *SonnenBatterie) createResponseFromValues(username, password, challenge, salt string) string {
-	// Step 1: SHA-512 hash the password and convert to hex
-	pwSha512 := sha512.Sum512([]byte(password))
+func (sb *SonnenBatterie) createSessionTokenOld() error {
+	pwSha512 := sha512.Sum512([]byte(sb.Password))
 	pwHex512 := hex.EncodeToString(pwSha512[:])
 
-	// Step 2: Derive key using PBKDF2 with salt
-	dk := pbkdf2.Key([]byte(pwHex512), []byte(salt), 7500, 64, sha512.New)
-	derivedHex := hex.EncodeToString(dk)
-
-	// Step 3: Create HMAC-SHA256 of challenge using derived key
-	h := hmac.New(sha256.New, []byte(derivedHex))
-	h.Write([]byte(challenge))
-	response := hex.EncodeToString(h.Sum(nil))
-
-	return response
+	body, _, err := sb.read(sb.client.Get(sb.BaseUrl + "challenge"))
+	if err != nil {
+		return err
+	}
+	// the challenge comes as a JSON string, including the quotes
+	challenge := strings.Trim(strings.TrimSpace(string(body)), `"`)
+	response := hex.EncodeToString(pbkdf2.Key([]byte(pwHex512), []byte(challenge), 7500, 64, sha512.New))
+	return sb.postSession(challenge, response, nil)
 }
 
-func (sb *SonnenBatterie) createSessionTokenNew() {
-	// Step 1: Get challenge
-	req, err := http.Get(sb.BaseUrl + "challenge")
-	if err != nil {
-		panic(err)
-	}
-	challengeData, err := io.ReadAll(req.Body)
-	if err != nil {
-		panic(err)
-	}
-	req.Body.Close()
+func (sb *SonnenBatterie) createResponseFromValues(password, challenge, salt string) string {
+	// SHA-512 of the password (hex), PBKDF2 with the salt, then HMAC-SHA256 of the challenge
+	pwSha512 := sha512.Sum512([]byte(password))
+	pwHex512 := hex.EncodeToString(pwSha512[:])
+	dk := pbkdf2.Key([]byte(pwHex512), []byte(salt), 7500, 64, sha512.New)
+	h := hmac.New(sha256.New, []byte(hex.EncodeToString(dk)))
+	h.Write([]byte(challenge))
+	return hex.EncodeToString(h.Sum(nil))
+}
 
-	// Parse challenge (could be JSON or plain text)
+func (sb *SonnenBatterie) createSessionTokenNew() error {
+	body, _, err := sb.read(sb.client.Get(sb.BaseUrl + "challenge"))
+	if err != nil {
+		return err
+	}
+	// the challenge may be a JSON string, a JSON object or plain text
 	var challenge string
-	var challengeMap map[string]interface{}
-	if err := json.Unmarshal(challengeData, &challengeMap); err == nil {
-		// It's JSON
-		if val, ok := challengeMap["challenge"].(string); ok {
-			challenge = val
-		} else {
-			// Get first value from map
-			for _, v := range challengeMap {
-				if s, ok := v.(string); ok {
-					challenge = s
-					break
+	var decoded interface{}
+	if json.Unmarshal(body, &decoded) == nil {
+		switch v := decoded.(type) {
+		case string:
+			challenge = v
+		case map[string]interface{}:
+			if s, ok := v["challenge"].(string); ok {
+				challenge = s
+			} else {
+				for _, val := range v {
+					if s, ok := val.(string); ok {
+						challenge = s
+						break
+					}
 				}
 			}
 		}
-	} else {
-		// Plain text
-		challenge = string(challengeData)
+	}
+	if challenge == "" {
+		challenge = strings.TrimSpace(string(body))
 	}
 
-	// Step 2: Get salt
-	req, err = http.Get(sb.BaseUrl + "salt/" + sb.Username)
+	body, _, err = sb.read(sb.client.Get(sb.BaseUrl + "salt/" + sb.Username))
 	if err != nil {
-		panic(err)
+		return err
 	}
-	saltData, err := io.ReadAll(req.Body)
-	if err != nil {
-		panic(err)
-	}
-	req.Body.Close()
-
 	var saltMap map[string]interface{}
-	err = json.Unmarshal(saltData, &saltMap)
-	if err != nil {
-		panic(err)
+	if err := json.Unmarshal(body, &saltMap); err != nil {
+		return fmt.Errorf("unexpected salt response: %w", err)
 	}
-	salt := saltMap["salt"].(string)
+	salt, _ := saltMap["salt"].(string)
 
-	// Step 3: Loop up to 2 times to handle new_challenge
+	// the battery may ask to repeat the login with a new challenge
 	for i := 0; i < 2; i++ {
-		response := sb.createResponseFromValues(sb.Username, sb.Password, challenge, salt)
-
-		payload := url.Values{}
-		payload.Set("user", sb.Username)
-		payload.Set("challenge", challenge)
-		payload.Set("response", response)
-
-		req, err = http.Post(sb.BaseUrl+"session", "application/x-www-form-urlencoded", bytes.NewBufferString(payload.Encode()))
-		if err != nil {
-			panic(err)
+		var newChallenge string
+		err := sb.postSession(challenge, sb.createResponseFromValues(sb.Password, challenge, salt), &newChallenge)
+		if err != nil || newChallenge == "" {
+			return err
 		}
-
-		if req.StatusCode >= 400 {
-			body, _ := io.ReadAll(req.Body)
-			req.Body.Close()
-			fmt.Printf("!!! - Login failed with HTTP %d\n", req.StatusCode)
-			fmt.Printf("Server reply: %s\n", string(body))
-			os.Exit(1)
-		}
-
-		sessionData, err := io.ReadAll(req.Body)
-		if err != nil {
-			panic(err)
-		}
-		req.Body.Close()
-
-		var result map[string]interface{}
-		err = json.Unmarshal(sessionData, &result)
-		if err != nil {
-			panic(err)
-		}
-
-		// Check for new_challenge and retry if present
-		if newChallenge, ok := result["new_challenge"].(string); ok && newChallenge != "" {
-			challenge = newChallenge
-			continue
-		}
-
-		// Check for authentication_token
-		if token, ok := result["authentication_token"].(string); ok && token != "" {
-			sb.Token = token
-			return
-		}
-
-		// Unexpected response
-		jsonStr, _ := json.Marshal(result)
-		fmt.Printf("!!! - Unexpected /session response: %s\n", string(jsonStr))
-		os.Exit(1)
+		challenge = newChallenge
 	}
-
-	fmt.Println("!!! - Failed to obtain authentication_token")
-	os.Exit(1)
+	return fmt.Errorf("failed to obtain authentication_token")
 }
 
-func (sb *SonnenBatterie) Get(what string) (string, bool) {
-	req, err := http.NewRequest("GET", sb.BaseUrl+what, nil)
+// postSession sends the login response. On a "new_challenge" reply it
+// stores the new challenge (if requested) instead of a token.
+func (sb *SonnenBatterie) postSession(challenge, response string, newChallenge *string) error {
+	payload := url.Values{}
+	payload.Set("user", sb.Username)
+	payload.Set("challenge", challenge)
+	payload.Set("response", response)
+	resp, err := sb.client.Post(sb.BaseUrl+"session", "application/x-www-form-urlencoded",
+		bytes.NewBufferString(payload.Encode()))
+	body, status, err := sb.read(resp, err)
 	if err != nil {
-		return "", false
+		return err
 	}
-	req.Header.Set("Auth-Token", sb.Token)
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return "", false
+	if status >= 400 {
+		// the reply may contain a block_time after too many failed logins
+		return fmt.Errorf("login failed with HTTP %d: %s", status, strings.TrimSpace(string(body)))
 	}
-	contents, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", false
-	}
-	// fmt.Printf("contents:\n%v\n", string(contents))
-
-	// map JSON
 	var result map[string]interface{}
-	err = json.Unmarshal(contents, &result)
-	if err != nil {
-		return "", false
+	if err := json.Unmarshal(body, &result); err != nil {
+		return fmt.Errorf("unexpected session response: %w", err)
 	}
-
-	out, err := json.MarshalIndent(result, "", "  ")
-	if err != nil {
-		return "", false
+	if s, ok := result["new_challenge"].(string); ok && s != "" && newChallenge != nil {
+		*newChallenge = s
+		return nil
 	}
-
-	// fmt.Println(string(out))
-	return string(out), true
+	if token, ok := result["authentication_token"].(string); ok && token != "" {
+		sb.Token = token
+		return nil
+	}
+	if e, ok := result["error"]; ok {
+		return fmt.Errorf("login error: %v", e)
+	}
+	return fmt.Errorf("unexpected session response")
 }
 
-func (sb *SonnenBatterie) GetApi2(what string) (string, bool) {
-	req, err := http.NewRequest("GET", sb.BaseApi2+what, nil)
+// Get reads one endpoint, path relative to /api/ (e.g. "battery_system",
+// "v2/latestdata"). Any JSON body is accepted (objects and lists).
+func (sb *SonnenBatterie) Get(path string) Result {
+	req, err := http.NewRequest("GET", sb.BaseUrl+path, nil)
 	if err != nil {
-		return "", false
+		return Result{Error: err.Error()}
 	}
 	req.Header.Set("Auth-Token", sb.Token)
-	resp, err := http.DefaultClient.Do(req)
+	body, status, err := sb.read(sb.client.Do(req))
 	if err != nil {
-		return "", false
-	}
-	contents, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", false
-	}
-	// fmt.Printf("contents:\n%v\n", string(contents))
-
-	// map JSON
-	var result map[string]interface{}
-	err = json.Unmarshal(contents, &result)
-	if err != nil {
-		return "", false
+		return Result{Status: status, Error: err.Error()}
 	}
 
-	out, err := json.MarshalIndent(result, "", "  ")
-	if err != nil {
-		return "", false
-	}
+	var data interface{}
+	dec := json.NewDecoder(bytes.NewReader(body))
+	dec.UseNumber() // keep numbers exactly as the battery sent them
+	jsonErr := dec.Decode(&data)
 
-	// fmt.Println(string(out))
-	return string(out), true
+	if status >= 400 {
+		msg := strings.TrimSpace(string(body))
+		if obj, ok := data.(map[string]interface{}); ok && jsonErr == nil && obj["error"] != nil {
+			msg = fmt.Sprint(obj["error"])
+		}
+		return Result{Status: status, Error: msg}
+	}
+	if jsonErr != nil {
+		return Result{Status: status, Error: "invalid JSON: " + jsonErr.Error()}
+	}
+	return Result{Status: status, Data: data}
+}
+
+func (sb *SonnenBatterie) read(resp *http.Response, err error) ([]byte, int, error) {
+	if err != nil {
+		return nil, 0, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	return body, resp.StatusCode, err
 }
