@@ -1,6 +1,8 @@
 .DEFAULT_GOAL := mactel
 
-VERSION := $(shell git tag | tail -1)
+# Version from the latest git tag; can be overridden, e.g. by the release
+# workflow or with: make <target> VERSION=x.y.z
+VERSION ?= $(shell git describe --tags --abbrev=0 2>/dev/null || echo dev)
 TAR := $(shell command -v gtar 2>/dev/null || command -v tar 2>/dev/null)
 
 amd64: GOARCH=amd64
@@ -35,7 +37,11 @@ winarm: build pack
 
 all: RUNS=amd64 arm64 mactel macarm wintel winarm
 all:
-	@for RUN in $(RUNS); do make $$RUN; done
+	@for RUN in $(RUNS); do $(MAKE) $$RUN VERSION=$(VERSION); done
+
+test:
+	go vet ./...
+	go test ./...
 
 build:
 	@rm -rf bin/$(GOOS)/$(GOARCH)
@@ -49,4 +55,4 @@ pack:
 	@rm -f bin/sb_info-*-$(GOOS)-$(GOARCH).tar.gz
 	@$(TAR) czf bin/sb_info-$(VERSION)-$(GOOS)-$(GOARCH).tar.gz bin/$(GOOS)/$(GOARCH)/sb_info$(EXT)
 
-.PHONY: build
+.PHONY: build pack test all
