@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- Cascade members: `stacking_status` lists the units keyed by serial
+  (`{"master": {"<serial>": {"ip": ..., "status": ...}}, "slaves": {...}}`),
+  so the summary showed only the master, without serial, and no slaves.
+  Members are now read in both shapes and merged by serial from all cascade
+  endpoints; checked against reports of two real cascade masters
+- The IPs of a cascade's units (`ip` in `stacking_status` and
+  `.../inverter/stacking/status`) are redacted unless `-no-redact` is given
+
+### Changed
+- `cascade.members` entries have a `status` (e.g. `WORKING`), and
+  `cascade.members_source` is now the list `cascade.members_sources`
+
 ## [0.4.0] - 2026-11-10
 
 Also maintained in the `tools/` folder of

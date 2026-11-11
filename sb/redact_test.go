@@ -10,7 +10,8 @@ const sample = `{
 	"IN_LocalAPIToken": "cd46d0f2-0000-0000-0000-000000000000",
 	"battery_system": {"network": {"lanip": "192.168.1.2", "wanip": "203.0.113.7", "wlanip": ""},
 	                   "system": {"mac_address": "00:e0:4b:00:00:01", "serial": "100000"}},
-	"meters": [{"password": "x", "w_total": 1}]
+	"meters": [{"password": "x", "w_total": 1}],
+	"slaves": {"100002": {"ip": "192.168.1.3", "status": "WORKING"}}
 }`
 
 func TestRedact(t *testing.T) {
@@ -50,4 +51,8 @@ func TestRedact(t *testing.T) {
 	check(true, []string{"battery_system", "system", "mac_address"}, Redacted)
 	check(false, []string{"battery_system", "network", "wanip"}, "203.0.113.7")
 	check(false, []string{"battery_system", "system", "mac_address"}, "00:e0:4b:00:00:01")
+	// cascade members (stacking_status)
+	check(true, []string{"slaves", "100002", "ip"}, Redacted)
+	check(false, []string{"slaves", "100002", "ip"}, "192.168.1.3")
+	check(true, []string{"slaves", "100002", "status"}, "WORKING")
 }

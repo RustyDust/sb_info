@@ -63,8 +63,9 @@ The report is meant to be shared, e.g. in a GitHub issue:
     "stack_modules": 4,
     "units_estimate_by_power": 2,
     "units_estimate_by_modules": 2,
-    "members": [{"role": "master", "serial": "100001"}, {"role": "slave", "serial": "..."}],
-    "members_source": "v1/commissioning_assistant/special_function/stacking/protect"
+    "members": [{"role": "master", "serial": "100001", "status": "WORKING"},
+                {"role": "slave", "serial": "100002", "status": "WORKING"}],
+    "members_sources": ["stacking_status", "v1/commissioning_assistant/special_function/stacking/protect"]
   },
   "endpoints": {
     "battery_system": {"status": 200, "data": {"...": "..."}},
@@ -85,8 +86,9 @@ The report is meant to be shared, e.g. in a GitHub issue:
   - `units_estimate_by_power` / `..._by_modules`: number of units, estimated as
     `stack_capacity / inverter_capacity` and `stack_modules / modules`
     (assumes identical units; a fraction hints at mixed units)
-  - `members`: the cascade's units with their serials, if one of the
-    dashboard's cascade endpoints lists them (`members_source`)
+  - `members`: the cascade's units with their serials and their `status`
+    from `stacking_status` (e.g. `WORKING`), merged by serial from all of the
+    dashboard's cascade endpoints that list them (`members_sources`)
 
 ### Endpoints
 
@@ -94,7 +96,7 @@ The report is meant to be shared, e.g. in a GitHub issue:
 |---|---|
 | v1 | `battery_system`, `system_data`, `v1/status`, `battery`, `inverter`, `powermeter`, `json_api/json_api_configuration`, `v1/commissioning_assistant/special_function` |
 | v2 | `v2/status`, `v2/latestdata`, `v2/configurations`, `v2/battery`, `v2/inverter`, `v2/powermeter`, `v2/io` |
-| cascade | `stacking_status`, `v1/commissioning_assistant/special_function/stacking/protect` (`400 "not a stack"` on single batteries), `v1/commissioning_assistant/inverter/stacking/status` (needs a role above `User`) |
+| cascade | `stacking_status`, `v1/commissioning_assistant/special_function/stacking/protect` (`400 "not a stack"` on single batteries), `v1/commissioning_assistant/inverter/stacking/status` (needs a role above `User`, e.g. `Installer`) |
 
 ### Examples with `jq`
 
