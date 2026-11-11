@@ -49,7 +49,7 @@ The report is meant to be shared, e.g. in a GitHub issue:
 
 ```json
 {
-  "tool": {"name": "sb_info", "version": "0.4.0"},
+  "tool": {"name": "sb_info", "version": "0.4.1"},
   "generated_at": "2026-11-10T21:47:47+01:00",
   "host": "<redacted>",
   "user": "User",
