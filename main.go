@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -41,7 +42,8 @@ var v2Endpoints = []string{
 
 // Read-only endpoints the battery's web dashboard uses for cascades (stacks).
 // "protect" answers "not a stack" (HTTP 400) on single batteries;
-// "inverter/stacking/status" needs a role above User (HTTP 401 for User).
+// "inverter/stacking/status" needs a role above User (HTTP 401 for User,
+// works for Installer).
 var cascadeEndpoints = []string{
 	"stacking_status",
 	"v1/commissioning_assistant/special_function/stacking/protect",
@@ -56,6 +58,7 @@ type Tool struct {
 type Member struct {
 	Role   string `json:"role"`
 	Serial string `json:"serial,omitempty"`
+	Status string `json:"status,omitempty"` // from stacking_status, e.g. "WORKING"
 }
 
 type Cascade struct {
@@ -67,7 +70,7 @@ type Cascade struct {
 	UnitsByPower   *float64 `json:"units_estimate_by_power,omitempty"`
 	UnitsByModules *float64 `json:"units_estimate_by_modules,omitempty"`
 	Members        []Member `json:"members,omitempty"`
-	MembersSource  string   `json:"members_source,omitempty"`
+	MembersSources []string `json:"members_sources,omitempty"`
 }
 
 type Report struct {
@@ -202,10 +205,25 @@ func analyseCascade(results map[string]sb.Result) *Cascade {
 		c.UnitsByModules = ratio(stackModules, modules)
 	}
 
+	// members of all cascade endpoints, merged by serial
+	bySerial := map[string]int{}
 	for _, path := range cascadeEndpoints {
-		if members := membersFrom(results[path].Data); len(members) > 0 {
-			c.Members, c.MembersSource = members, path
-			break
+		members := membersFrom(results[path].Data)
+		if len(members) == 0 {
+			continue
+		}
+		c.MembersSources = append(c.MembersSources, path)
+		for _, m := range members {
+			if i, ok := bySerial[m.Serial]; ok && m.Serial != "" {
+				if c.Members[i].Status == "" {
+					c.Members[i].Status = m.Status
+				}
+				continue
+			}
+			if m.Serial != "" {
+				bySerial[m.Serial] = len(c.Members)
+			}
+			c.Members = append(c.Members, m)
 		}
 	}
 
@@ -213,8 +231,11 @@ func analyseCascade(results map[string]sb.Result) *Cascade {
 	return c
 }
 
-// membersFrom extracts {"master": {...}, "slaves": [{...}, ...]}, the shape
-// the dashboard's cascade endpoints use; data may also be nested in "data".
+// membersFrom extracts the master and slaves of {"master": ..., "slaves": ...},
+// also when nested in "data" (like stacking_status). A member group is either
+// one object with a "serial" field (stacking/protect), a list of those
+// (slaves), or objects keyed by serial, as in stacking_status:
+// {"master": {"<serial>": {"ip": ..., "status": "WORKING"}}, "slaves": {...}}.
 func membersFrom(data interface{}) []Member {
 	obj, ok := data.(map[string]interface{})
 	if !ok {
@@ -223,18 +244,50 @@ func membersFrom(data interface{}) []Member {
 	if inner, ok := obj["data"].(map[string]interface{}); ok && obj["master"] == nil {
 		obj = inner
 	}
+	return append(memberGroup("master", obj["master"]), memberGroup("slave", obj["slaves"])...)
+}
+
+func memberGroup(role string, v interface{}) []Member {
 	var members []Member
-	if master, ok := obj["master"].(map[string]interface{}); ok {
-		members = append(members, Member{Role: "master", Serial: str(master["serial"])})
-	}
-	if slaves, ok := obj["slaves"].([]interface{}); ok {
-		for _, s := range slaves {
-			if slave, ok := s.(map[string]interface{}); ok {
-				members = append(members, Member{Role: "slave", Serial: str(slave["serial"])})
+	switch g := v.(type) {
+	case []interface{}:
+		for _, item := range g {
+			if m, ok := item.(map[string]interface{}); ok {
+				members = append(members, member(role, m))
 			}
+		}
+	case map[string]interface{}:
+		if len(g) == 0 {
+			return nil
+		}
+		if _, ok := g["serial"]; ok || !allObjects(g) {
+			return []Member{member(role, g)}
+		}
+		serials := make([]string, 0, len(g))
+		for serial := range g {
+			serials = append(serials, serial)
+		}
+		sort.Strings(serials) // stable order: Go maps aren't ordered
+		for _, serial := range serials {
+			m := g[serial].(map[string]interface{})
+			members = append(members, Member{Role: role, Serial: serial, Status: str(m["status"])})
 		}
 	}
 	return members
+}
+
+func member(role string, m map[string]interface{}) Member {
+	return Member{Role: role, Serial: str(m["serial"]), Status: str(m["status"])}
+}
+
+// allObjects: true if all values of g are objects
+func allObjects(g map[string]interface{}) bool {
+	for _, v := range g {
+		if _, ok := v.(map[string]interface{}); !ok {
+			return false
+		}
+	}
+	return true
 }
 
 func lookup(data interface{}, keys ...string) interface{} {

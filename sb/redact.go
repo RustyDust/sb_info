@@ -9,8 +9,10 @@ const Redacted = "<redacted>"
 var secretKey = regexp.MustCompile(`(?i)token|password|passwd|secret`)
 
 // Network identifiers: redacted unless explicitly requested, since reports
-// often get posted publicly (public WAN IP, VPN IP, MAC address).
+// often get posted publicly (public WAN IP, VPN IP, MAC address, the IPs of
+// a cascade's units).
 var networkKeys = map[string]bool{
+	"ip":          true,
 	"lanip":       true,
 	"vpnip":       true,
 	"wanip":       true,
