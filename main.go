@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"sort"
@@ -59,6 +60,7 @@ type Member struct {
 	Role   string `json:"role"`
 	Serial string `json:"serial,omitempty"`
 	Status string `json:"status,omitempty"` // from stacking_status, e.g. "WORKING"
+	IP     string `json:"-"`                // used to read the slaves, never written
 }
 
 type Cascade struct {
@@ -83,6 +85,17 @@ type Report struct {
 	Error       string               `json:"error,omitempty"`
 	Cascade     *Cascade             `json:"cascade,omitempty"`
 	Endpoints   map[string]sb.Result `json:"endpoints,omitempty"`
+	Slaves      []UnitReport         `json:"slaves,omitempty"`
+}
+
+// UnitReport: what a cascade's slave reports, read via the IP the master lists
+type UnitReport struct {
+	Serial      string               `json:"serial,omitempty"`
+	Host        string               `json:"host"`
+	GeneratedAt string               `json:"generated_at"`
+	Error       string               `json:"error,omitempty"`
+	Cascade     *Cascade             `json:"cascade,omitempty"`
+	Endpoints   map[string]sb.Result `json:"endpoints,omitempty"`
 }
 
 func main() {
@@ -91,6 +104,8 @@ func main() {
 	h := flag.String("h", "", "host (IP address or host name of the battery)")
 	onlyV2 := flag.Bool("2", false, "read only API v2 endpoints (plus the cascade check)")
 	noRedact := flag.Bool("no-redact", false, "keep IP and MAC addresses (credentials are always redacted)")
+	noSlaves := flag.Bool("no-slaves", false, "on a cascade master, don't read the slaves")
+	out := flag.String("o", "", "report file (UTF-8), default sb_info-<date>-<time>.json; `-` writes to stdout")
 	version := flag.Bool("version", false, "show version information")
 	flag.Parse()
 
@@ -103,13 +118,18 @@ func main() {
 		password = os.Getenv("SB_PASSWORD")
 	}
 	if *h == "" || password == "" {
-		fmt.Fprintln(os.Stderr, "usage: sb_info -h <host> [-u <user>] [-p <password> | SB_PASSWORD=...] [-2] [-no-redact]")
+		fmt.Fprintln(os.Stderr, "usage: sb_info -h <host> [-u <user>] [-p <password> | SB_PASSWORD=...] [-2] [-no-redact] [-no-slaves] [-o <file> | -o -]")
 		os.Exit(2)
 	}
 
+	now := time.Now()
+	target := *out
+	if target == "" {
+		target = defaultReportName(now)
+	}
 	report := Report{
 		Tool:        Tool{Name: "sb_info", Version: Version},
-		GeneratedAt: time.Now().Format(time.RFC3339),
+		GeneratedAt: now.Format(time.RFC3339),
 		Host:        *h,
 		User:        *u,
 		Redacted:    []string{"credentials"},
@@ -117,14 +137,6 @@ func main() {
 	if !*noRedact {
 		report.Host = sb.Redacted
 		report.Redacted = append(report.Redacted, "network")
-	}
-
-	// error messages (e.g. connection errors) contain the host
-	scrub := func(msg string) string {
-		if *noRedact {
-			return msg
-		}
-		return strings.ReplaceAll(msg, *h, sb.Redacted)
 	}
 
 	endpoints := append([]string{}, v2Endpoints...)
@@ -135,38 +147,132 @@ func main() {
 	}
 	endpoints = append(endpoints, cascadeEndpoints...)
 
-	sunBat := sb.SunBatInit(*u, password, *h)
-	if err := sunBat.Login(); err != nil {
-		report.Error = scrub(err.Error())
-		write(report)
+	read := func(host string) (map[string]sb.Result, error) {
+		return readUnit(*u, password, host, endpoints)
+	}
+	results, err := read(*h)
+	if err != nil {
+		report.Error = scrubber(*noRedact, *h)(err.Error())
+		save(report, target)
 		os.Exit(1)
 	}
+	report.Cascade = analyseCascade(results)
+	report.Endpoints = redactResults(results, *noRedact, scrubber(*noRedact, *h))
 
+	if !*noSlaves && report.Cascade.Role == "master" {
+		report.Slaves = readSlaves(report.Cascade, *h, read, *noRedact, time.Now)
+	}
+	save(report, target)
+}
+
+// readUnit logs in once and reads all endpoints of one battery.
+func readUnit(user, password, host string, endpoints []string) (map[string]sb.Result, error) {
+	sunBat := sb.SunBatInit(user, password, host)
+	if err := sunBat.Login(); err != nil {
+		return nil, err
+	}
 	results := map[string]sb.Result{}
 	for _, path := range endpoints {
 		results[path] = sunBat.Get(path)
 		// the battery's web server handles one request at a time: go easy on it
 		time.Sleep(200 * time.Millisecond)
 	}
-
-	report.Cascade = analyseCascade(results)
-	report.Endpoints = map[string]sb.Result{}
-	for path, r := range results {
-		r.Data = sb.Redact(r.Data, !*noRedact)
-		r.Error = scrub(r.Error)
-		report.Endpoints[path] = r
-	}
-	write(report)
+	return results, nil
 }
 
-func write(report Report) {
-	enc := json.NewEncoder(os.Stdout)
-	enc.SetIndent("", "  ")
-	enc.SetEscapeHTML(false)
-	if err := enc.Encode(report); err != nil {
+// readSlaves reads every slave the master lists with an IP, using the same
+// credentials. One login attempt per slave (failed logins make the battery
+// block further ones); a failing slave is recorded and the next one is read.
+func readSlaves(c *Cascade, masterHost string, read func(string) (map[string]sb.Result, error),
+	noRedact bool, now func() time.Time) []UnitReport {
+	var reports []UnitReport
+	for _, m := range c.Members {
+		if m.Role != "slave" || m.IP == "" || m.IP == masterHost {
+			continue
+		}
+		fmt.Fprintf(os.Stderr, "reading slave %s ...\n", m.Serial)
+		scrub := scrubber(noRedact, masterHost, m.IP)
+		unit := UnitReport{Serial: m.Serial, Host: m.IP, GeneratedAt: now().Format(time.RFC3339)}
+		if !noRedact {
+			unit.Host = sb.Redacted
+		}
+		results, err := read(m.IP)
+		if err != nil {
+			unit.Error = scrub(err.Error())
+		} else {
+			unit.Cascade = analyseCascade(results)
+			unit.Endpoints = redactResults(results, noRedact, scrub)
+		}
+		reports = append(reports, unit)
+	}
+	return reports
+}
+
+// scrubber removes the given hosts from error messages (e.g. connection
+// errors), unless network identifiers are kept.
+func scrubber(noRedact bool, hosts ...string) func(string) string {
+	return func(msg string) string {
+		if noRedact {
+			return msg
+		}
+		for _, h := range hosts {
+			if h != "" {
+				msg = strings.ReplaceAll(msg, h, sb.Redacted)
+			}
+		}
+		return msg
+	}
+}
+
+func redactResults(results map[string]sb.Result, noRedact bool, scrub func(string) string) map[string]sb.Result {
+	out := make(map[string]sb.Result, len(results))
+	for path, r := range results {
+		r.Data = sb.Redact(r.Data, !noRedact)
+		r.Error = scrub(r.Error)
+		out[path] = r
+	}
+	return out
+}
+
+// defaultReportName: sb_info-20261112-094104.json (no colons: valid on Windows)
+func defaultReportName(t time.Time) string {
+	return "sb_info-" + t.Format("20060102-150405") + ".json"
+}
+
+// save writes the report and tells where it went; exits on failure.
+func save(report Report, target string) {
+	if err := writeReport(report, target); err != nil {
 		fmt.Fprintln(os.Stderr, "unable to write report:", err)
 		os.Exit(1)
 	}
+	if target != "-" {
+		fmt.Fprintln(os.Stderr, "report written to", target)
+	}
+}
+
+// writeReport writes the report as UTF-8 JSON to the file target, or to
+// stdout for "-". sb_info writes the file itself because shell redirection
+// may re-encode the output: Windows PowerShell 5.1's ">" writes UTF-16.
+func writeReport(report Report, target string) error {
+	if target == "-" {
+		return encodeReport(os.Stdout, report)
+	}
+	f, err := os.Create(target)
+	if err != nil {
+		return err
+	}
+	if err := encodeReport(f, report); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
+}
+
+func encodeReport(w io.Writer, report Report) error {
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	enc.SetEscapeHTML(false)
+	return enc.Encode(report)
 }
 
 // analyseCascade summarises what the battery tells about a cascade: its role,
@@ -217,6 +323,9 @@ func analyseCascade(results map[string]sb.Result) *Cascade {
 			if i, ok := bySerial[m.Serial]; ok && m.Serial != "" {
 				if c.Members[i].Status == "" {
 					c.Members[i].Status = m.Status
+				}
+				if c.Members[i].IP == "" {
+					c.Members[i].IP = m.IP
 				}
 				continue
 			}
@@ -270,14 +379,14 @@ func memberGroup(role string, v interface{}) []Member {
 		sort.Strings(serials) // stable order: Go maps aren't ordered
 		for _, serial := range serials {
 			m := g[serial].(map[string]interface{})
-			members = append(members, Member{Role: role, Serial: serial, Status: str(m["status"])})
+			members = append(members, Member{Role: role, Serial: serial, Status: str(m["status"]), IP: str(m["ip"])})
 		}
 	}
 	return members
 }
 
 func member(role string, m map[string]interface{}) Member {
-	return Member{Role: role, Serial: str(m["serial"]), Status: str(m["status"])}
+	return Member{Role: role, Serial: str(m["serial"]), Status: str(m["status"]), IP: str(m["ip"])}
 }
 
 // allObjects: true if all values of g are objects

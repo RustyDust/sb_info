@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-11-12
+
+### Added
+- On a cascade master, sb_info also reads the slaves: with the IPs the
+  master lists in `stacking_status` and the same credentials, one login
+  attempt per slave, added to the report under `slaves` (redacted like the
+  rest). `-no-slaves` turns this off
+
+### Changed
+- The report is written to a file by default, `sb_info-<date>-<time>.json`
+  in the current directory, always UTF-8; the path is shown on stderr.
+  `-o <file>` chooses the name, `-o -` writes to stdout as before.
+  Redirecting with `>` in Windows PowerShell 5.1 produced UTF-16 reports.
+
 ## [0.4.1] - 2026-11-11
 
 ### Fixed
