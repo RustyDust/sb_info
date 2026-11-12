@@ -15,12 +15,19 @@ Download the version for your operating system from the [Releases](https://githu
 
 ```bash
 # password as parameter ...
-./sb_info -h 192.168.0.22 -p <password> > report.json
+./sb_info -h 192.168.0.22 -p <password>
 # ... or from the environment (keeps it out of the shell history)
-SB_PASSWORD=<password> ./sb_info -h 192.168.0.22 > report.json
+SB_PASSWORD=<password> ./sb_info -h 192.168.0.22
 ```
 
-On Windows use `sb_info.exe`; set the password with `$env:SB_PASSWORD="..."` (PowerShell).
+The report is written to `sb_info-<date>-<time>.json` in the current
+directory (e.g. `sb_info-20261112-094104.json`); `-o <file>` chooses another
+name, `-o -` writes to stdout instead.
+
+On Windows use `sb_info.exe`; set the password with `$env:SB_PASSWORD="..."`
+(PowerShell). Let sb_info write the file rather than redirecting with `>`:
+Windows PowerShell 5.1 re-encodes redirected output as UTF-16, which many
+tools can't read.
 
 | Parameter | Meaning |
 |---|---|
@@ -29,6 +36,8 @@ On Windows use `sb_info.exe`; set the password with `$env:SB_PASSWORD="..."` (Po
 | `-p <password>` | password; alternatively the environment variable `SB_PASSWORD` |
 | `-2` | read only the API v2 endpoints (the cascade check always runs) |
 | `-no-redact` | keep IP and MAC addresses in the report |
+| `-no-slaves` | on a cascade master, don't read the slaves |
+| `-o <file>` | report file (UTF-8), default `sb_info-<date>-<time>.json`; `-o -` writes to stdout |
 | `-version` | show the version |
 
 Exit codes: `0` report written (individual endpoints may still have failed,
@@ -49,7 +58,7 @@ The report is meant to be shared, e.g. in a GitHub issue:
 
 ```json
 {
-  "tool": {"name": "sb_info", "version": "0.4.1"},
+  "tool": {"name": "sb_info", "version": "0.5.0"},
   "generated_at": "2026-11-10T21:47:47+01:00",
   "host": "<redacted>",
   "user": "User",
@@ -89,6 +98,13 @@ The report is meant to be shared, e.g. in a GitHub issue:
   - `members`: the cascade's units with their serials and their `status`
     from `stacking_status` (e.g. `WORKING`), merged by serial from all of the
     dashboard's cascade endpoints that list them (`members_sources`)
+- `slaves`: only on a cascade master. sb_info also reads every slave the
+  master lists in `stacking_status`, via the slave's IP and with the same
+  user and password, and adds one entry per slave: `serial`, `host`,
+  `generated_at`, `cascade` and `endpoints` like above, or `error` (e.g. a
+  rejected login). Each slave gets exactly one login attempt, as failed
+  logins make the battery block further ones. Only the master knows the
+  other units, so run sb_info against the master; `-no-slaves` skips this.
 
 ### Endpoints
 
@@ -99,6 +115,8 @@ The report is meant to be shared, e.g. in a GitHub issue:
 | cascade | `stacking_status`, `v1/commissioning_assistant/special_function/stacking/protect` (`400 "not a stack"` on single batteries), `v1/commissioning_assistant/inverter/stacking/status` (needs a role above `User`, e.g. `Installer`) |
 
 ### Examples with `jq`
+
+With the report written by `-o report.json` (or `./sb_info ... -o - | jq ...`):
 
 ```bash
 jq .cascade report.json                                   # cascade summary
